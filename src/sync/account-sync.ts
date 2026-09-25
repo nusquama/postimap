@@ -80,6 +80,8 @@ export class AccountSync {
       /** Keep attachment bytes on the server; see storage.attachments in config.yaml. */
       ATTACHMENTS_ON_DEMAND?: boolean;
       FULL_TIER_MAX_SKIP_SECONDS: number;
+      /** Mirror only the N most recent messages per folder; 0 mirrors all. */
+      MAX_MESSAGES_PER_FOLDER?: number;
     },
     _databaseUrl: string,
     private outboundProcessor: OutboundProcessor,
@@ -162,6 +164,7 @@ export class AccountSync {
         this.config.MAX_MESSAGE_BYTES,
         this.config.FULL_TIER_MAX_SKIP_SECONDS * 1_000,
         this.config.ATTACHMENTS_ON_DEMAND ?? false,
+        this.config.MAX_MESSAGES_PER_FOLDER ?? 0,
       );
 
       const folders = await this.getDbFolders();
@@ -371,6 +374,7 @@ export class AccountSync {
         this.config.MAX_MESSAGE_BYTES,
         this.config.FULL_TIER_MAX_SKIP_SECONDS * 1_000,
         this.config.ATTACHMENTS_ON_DEMAND ?? false,
+        this.config.MAX_MESSAGES_PER_FOLDER ?? 0,
       );
 
       // Reconcile the folder list every cycle: a folder created in another mail client
@@ -505,6 +509,7 @@ export class AccountSync {
             this.config.MAX_MESSAGE_BYTES,
             this.config.FULL_TIER_MAX_SKIP_SECONDS * 1_000,
             this.config.ATTACHMENTS_ON_DEMAND ?? false,
+            this.config.MAX_MESSAGES_PER_FOLDER ?? 0,
           );
 
           await inbound.syncFolder(dbFolder.id, dbFolder.imap_name, this.abortController.signal);

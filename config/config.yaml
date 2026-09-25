@@ -79,6 +79,10 @@ sync:
   # flag set. A flag changed by another client moves neither number, so the skip is bounded:
   # after this long the full diff runs regardless. Trades flag-change latency against load
   full_tier_max_skip_seconds: 600
+  # Mirror only the N most recent messages of each folder (highest UIDs); 0 mirrors all.
+  # Messages already mirrored stay; older ones are never fetched and never counted as
+  # deleted. New mail keeps arriving as usual.
+  max_messages_per_folder: 0
 
 storage:
   # Messages larger than this are stored as envelope and flags only (is_truncated = true)

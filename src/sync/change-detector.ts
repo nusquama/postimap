@@ -81,6 +81,7 @@ export async function detectChanges(
   pendingUids: Set<number>,
   qresyncEvents?: QresyncSelectEvents,
   fullTierMaxSkipMs = 0,
+  maxMessagesPerFolder = 0,
 ): Promise<ChangeSet> {
   const mailbox = client.mailbox;
   if (!mailbox) {
@@ -113,7 +114,7 @@ export async function detectChanges(
     case "condstore":
       return detectCondstore(client, folder, pendingUids);
     case "full":
-      return detectFull(client, folder, pendingUids, fullTierMaxSkipMs);
+      return detectFull(client, folder, pendingUids, fullTierMaxSkipMs, maxMessagesPerFolder);
   }
 }
 
@@ -350,6 +351,7 @@ async function detectFull(
   folder: FolderState,
   pendingUids: Set<number>,
   maxSkipMs: number,
+  maxMessagesPerFolder = 0,
 ): Promise<ChangeSet> {
   const result: ChangeSet = {
     newUids: [],
@@ -372,7 +374,10 @@ async function detectFull(
     mailbox !== false &&
     folder.uidnext !== null &&
     BigInt(mailbox.uidNext) === folder.uidnext &&
-    mailbox.exists === folder.knownUids.size;
+    // With a per-folder limit the mirror holds fewer rows than the server by design.
+    (mailbox.exists === folder.knownUids.size ||
+      (maxMessagesPerFolder > 0 &&
+        folder.knownUids.size >= Math.min(mailbox.exists, maxMessagesPerFolder)));
   // No recorded sync time means nothing has been reconciled yet, so never skip.
   const skipExpired =
     !folder.lastSyncedAt || Date.now() - folder.lastSyncedAt.getTime() >= maxSkipMs;
@@ -398,8 +403,9 @@ async function detectFull(
     }
   }
 
-  // Find new UIDs
-  for (const uid of remoteUids) {
+  // Find new UIDs, among the most recent N when a per-folder limit is set. Deletions above
+  // compare against every server UID: a message outside the window still exists.
+  for (const uid of newestUids(remoteUids, maxMessagesPerFolder)) {
     if (!folder.knownUids.has(uid)) {
       result.newUids.push(uid);
     }
@@ -442,4 +448,10 @@ function flagSetsEqual(a: Set<string>, b: Set<string>): boolean {
     if (!b.has(flag)) return false;
   }
   return true;
+}
+
+/** The `limit` highest UIDs, ascending; every UID when `limit` is 0. */
+export function newestUids(uids: number[], limit: number): number[] {
+  const sorted = [...uids].sort((a, b) => a - b);
+  return limit > 0 ? sorted.slice(-limit) : sorted;
 }
