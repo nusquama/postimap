@@ -6,10 +6,12 @@ import { sql } from "kysely";
  * contract_version at startup against the value they were built for.
  *
  * postimap_app: NOLOGIN role carrying the write contract as database-enforced grants,
- * not convention. Consumer login roles are granted membership in it. Role creation is
- * wrapped in an exception handler rather than an existence check because CREATE ROLE has
- * no IF NOT EXISTS form and concurrent migrations (parallel test schemas, for instance)
- * would otherwise race on the plain existence check.
+ * not convention. Consumer login roles are granted membership in it. CREATE ROLE has no
+ * IF NOT EXISTS form, so it needs both guards: the existence check lets a service role
+ * without CREATEROLE -- a managed database, where an administrator creates postimap_app
+ * beforehand -- skip a statement it is not allowed to run at all, since the privilege
+ * check fails before any duplicate check could; the exception handler covers concurrent
+ * migrations (parallel test schemas, for instance) that both pass the existence check.
  */
 
 export async function up(db: Kysely<unknown>): Promise<void> {
@@ -27,7 +29,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`
     DO $$
     BEGIN
-      CREATE ROLE postimap_app NOLOGIN;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postimap_app') THEN
+        CREATE ROLE postimap_app NOLOGIN;
+      END IF;
     EXCEPTION WHEN duplicate_object THEN
       NULL;
     END
