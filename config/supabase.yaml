@@ -1,0 +1,18 @@
+# Preset for a managed Supabase database, reached through its pooler in session mode
+# (port 5432; the transaction mode on 6543 breaks the instance lock and LISTEN).
+# Point CONFIG_OVERRIDE_PATH at this file and set DB_HOST, DB_USER, DB_PASSWORD,
+# ENCRYPTION_KEY and ATTACHMENTS_TOKEN in the environment.
+database:
+  host: ${DB_HOST}
+  port: 5432
+  name: postgres
+  user: ${DB_USER}
+  ssl:
+    enabled: true
+    reject_unauthorized: true
+    # Supabase root CA (public certificate), shipped with the image under /app/config
+    ca_file: /app/config/supabase-ca.crt
+sync:
+  full_tier_max_skip_seconds: 0
+storage:
+  attachments: on_demand
