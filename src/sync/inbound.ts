@@ -18,6 +18,7 @@ import {
   type FlagChange,
   type FolderPins,
   type FolderState,
+  newestUids,
   type QresyncSelectEvents,
 } from "./change-detector.js";
 import { getPendingOutboundUids, getQueuedFolderUids } from "./loop-guard.js";
@@ -73,6 +74,8 @@ export class InboundSync {
     private fullTierMaxSkipMs = 0,
     /** Keep attachment bytes on the server; see storage.attachments in config.yaml. */
     private attachmentsOnDemand = false,
+    /** Mirror only the N most recent messages per folder; 0 mirrors all. */
+    private maxMessagesPerFolder = 0,
   ) {}
 
   /**
@@ -159,6 +162,7 @@ export class InboundSync {
           pendingUids,
           qresyncEvents,
           this.fullTierMaxSkipMs,
+          this.maxMessagesPerFolder,
         );
 
         if (changes.uidValidityChanged) {
@@ -297,8 +301,11 @@ export class InboundSync {
         // numerator and already advances per message; together with initial_sync_done
         // they also say which folder is in flight right now, which nothing else does --
         // per-message events are suppressed for the whole backfill.
+        // The UIDs this folder mirrors: all of them, or the most recent N.
+        const wantedUids = allUids === false ? [] : newestUids(allUids, this.maxMessagesPerFolder);
+
         if (backfill) {
-          await this.setBackfillTotal(folderId, allUids === false ? 0 : allUids.length);
+          await this.setBackfillTotal(folderId, wantedUids.length);
         }
 
         if (allUids === false || allUids.length === 0) {
@@ -317,7 +324,7 @@ export class InboundSync {
           // (fetchAndStoreMessages logs and moves on), so a missing row is exactly what
           // this diff finds.
           const existingUids = await this.getKnownUids(folderId);
-          const missingUids = allUids.filter((uid) => !existingUids.has(uid));
+          const missingUids = wantedUids.filter((uid) => !existingUids.has(uid));
 
           // If cancelled partway through, fetchAndStoreMessages throws SyncAbortedError --
           // everything below (expunge diff, folder state, initial_sync_done) is then

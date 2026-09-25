@@ -46,6 +46,7 @@ const PostImapConfigSchema = z.object({
     max_retry_attempts: z.number().int().positive(),
     idle_folders: z.array(z.string().min(1)),
     full_tier_max_skip_seconds: z.number().int().nonnegative(),
+    max_messages_per_folder: z.number().int().nonnegative(),
   }),
   storage: z.object({
     max_message_bytes: z.number().int().positive(),

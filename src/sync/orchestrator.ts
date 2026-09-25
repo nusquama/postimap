@@ -47,6 +47,7 @@ export class Orchestrator {
       MAX_MESSAGE_BYTES?: number;
       ATTACHMENTS_ON_DEMAND?: boolean;
       FULL_TIER_MAX_SKIP_SECONDS: number;
+      MAX_MESSAGES_PER_FOLDER?: number;
       RETENTION: RetentionConfig;
       RETENTION_INTERVAL_HOURS: number;
     },

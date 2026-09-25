@@ -76,6 +76,7 @@ async function main(): Promise<void> {
       MAX_MESSAGE_BYTES: config.storage.max_message_bytes,
       ATTACHMENTS_ON_DEMAND: config.storage.attachments === "on_demand",
       FULL_TIER_MAX_SKIP_SECONDS: config.sync.full_tier_max_skip_seconds,
+      MAX_MESSAGES_PER_FOLDER: config.sync.max_messages_per_folder,
       RETENTION: {
         purgeExpungedAfterDays: config.retention.purge_expunged_after_days,
         purgeFoldersAfterDays: config.retention.purge_folders_after_days,
