@@ -34,6 +34,9 @@ export interface SetupE2EOptions {
    * credentials, so the value only needs to round-trip, not actually authenticate.
    */
   smtp?: boolean;
+  /** IMAP server to use instead of the default test server (defaults to env.IMAP_*) */
+  imapHost?: string;
+  imapPort?: number;
 }
 
 /**
@@ -43,6 +46,8 @@ export interface SetupE2EOptions {
 export async function setupE2EContext(opts?: SetupE2EOptions): Promise<E2EContext> {
   const prefix = opts?.emailPrefix ?? "e2e";
   const folderImapName = opts?.folderImapName ?? "INBOX";
+  const imapHost = opts?.imapHost ?? env.IMAP_HOST;
+  const imapPort = opts?.imapPort ?? env.IMAP_PORT;
 
   const admin = new MailServerAdmin();
   const suffix = randomUUID().slice(0, 8);
@@ -72,7 +77,7 @@ export async function setupE2EContext(opts?: SetupE2EOptions): Promise<E2EContex
     INSERT INTO accounts (id, name, imap_host, imap_port, imap_user, imap_password,
       smtp_host, smtp_port, smtp_user, smtp_password, is_active, state)
     VALUES (
-      ${accountId}, ${testEmail}, ${env.IMAP_HOST}, ${env.IMAP_PORT},
+      ${accountId}, ${testEmail}, ${imapHost}, ${imapPort},
       ${testEmail}, ${encryptPassword(testPassword)},
       ${smtpColumns.smtp_host}, ${smtpColumns.smtp_port}, ${smtpColumns.smtp_user},
       ${smtpColumns.smtp_password},
@@ -93,8 +98,8 @@ export async function setupE2EContext(opts?: SetupE2EOptions): Promise<E2EContex
     imapClient = null as unknown as ImapClient;
   } else {
     imapClient = new ImapClient({
-      host: env.IMAP_HOST,
-      port: env.IMAP_PORT,
+      host: imapHost,
+      port: imapPort,
       user: testEmail,
       password: testPassword,
       tls: testTls,

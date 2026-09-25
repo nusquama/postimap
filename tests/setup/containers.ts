@@ -17,6 +17,7 @@ export interface ContainerConfig {
 interface ManagedContainers {
   pg?: StartedTestContainer;
   mail?: StartedTestContainer;
+  noCondstoreMail?: StartedTestContainer;
   toxiproxy?: StartedTestContainer;
   mailpit?: StartedTestContainer;
   radicale?: StartedTestContainer;

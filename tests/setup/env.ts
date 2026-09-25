@@ -10,6 +10,13 @@ export const env = {
   IMAP_HOST: process.env.POSTIMAP_TEST_IMAP_HOST ?? "127.0.0.1",
   IMAP_PORT: Number.parseInt(process.env.POSTIMAP_TEST_IMAP_PORT ?? "31143", 10),
 
+  // The same mail server advertising neither CONDSTORE nor QRESYNC (see global-setup.ts)
+  NO_CONDSTORE_IMAP_HOST: process.env.POSTIMAP_TEST_NO_CONDSTORE_IMAP_HOST ?? "127.0.0.1",
+  NO_CONDSTORE_IMAP_PORT: Number.parseInt(
+    process.env.POSTIMAP_TEST_NO_CONDSTORE_IMAP_PORT ?? "31144",
+    10,
+  ),
+
   // Mail server LMTP (implicit TLS) — used only by the test harness to inject mail,
   // simulating externally-arriving messages. Distinct from the outbox's own SMTP send
   // path, which talks to Mailpit below.

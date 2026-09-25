@@ -25,6 +25,11 @@ function wirePodmanSocket(): void {
   process.env.DOCKER_HOST = `unix://${podmanSocket}`;
 }
 
+/** Everything the test server offers except CONDSTORE and QRESYNC. */
+const NO_CONDSTORE_DOVECOT_CONF =
+  "imap_capability = IMAP4rev1 CHILDREN ENABLE ID IDLE LIST-EXTENDED LIST-STATUS LITERAL+ " +
+  "MOVE NAMESPACE SASL-IR SORT SPECIAL-USE THREAD=ORDEREDSUBJECT UIDPLUS UNSELECT WITHIN\n";
+
 export default async function setup() {
   const isCI = process.env.CI === "true" || process.env.CI === "1";
 
@@ -55,6 +60,23 @@ export default async function setup() {
     .withWaitStrategy(Wait.forListeningPorts());
   if (!isCI) mailContainer = mailContainer.withReuse();
   const startedMail = await mailContainer.start();
+
+  // A second instance of the same server that advertises neither CONDSTORE nor QRESYNC,
+  // the capability set of several hosted providers. imap_capability replaces the whole
+  // CAPABILITY response, so detectCapabilities() reads what such a provider reports and
+  // PostIMAP picks its full-diff tier on its own rather than having it forced. One
+  // difference remains: ImapFlow's autoEnable() still sends ENABLE CONDSTORE QRESYNC,
+  // which this server honours and such a provider ignores, so SELECT here still reports
+  // HIGHESTMODSEQ. The full-diff tier never reads it.
+  let noCondstoreContainer = new GenericContainer("dovecot/dovecot:2.4.5")
+    .withExposedPorts(31143)
+    .withEnvironment({ USER_PASSWORD: env.MAIL_PASSWORD })
+    .withCopyContentToContainer([
+      { content: NO_CONDSTORE_DOVECOT_CONF, target: "/etc/dovecot/conf.d/zz-no-condstore.conf" },
+    ])
+    .withWaitStrategy(Wait.forListeningPorts());
+  if (!isCI) noCondstoreContainer = noCondstoreContainer.withReuse();
+  const startedNoCondstore = await noCondstoreContainer.start();
 
   // No shell in this image, so an exec-based healthcheck can't probe HTTP readiness.
   // Callers poll the API directly instead (see createToxiproxyClient in chaos-helpers.ts).
@@ -90,6 +112,7 @@ export default async function setup() {
   setManagedContainers({
     pg: startedPg,
     mail: startedMail,
+    noCondstoreMail: startedNoCondstore,
     toxiproxy: startedToxiproxy,
     mailpit: startedMailpit,
     radicale: startedRadicale,
@@ -113,6 +136,10 @@ export default async function setup() {
   process.env.POSTIMAP_TEST_PG_PORT = String(config.pgPort);
   process.env.POSTIMAP_TEST_IMAP_HOST = config.imapHost;
   process.env.POSTIMAP_TEST_IMAP_PORT = String(config.imapPort);
+  process.env.POSTIMAP_TEST_NO_CONDSTORE_IMAP_HOST = startedNoCondstore.getHost();
+  process.env.POSTIMAP_TEST_NO_CONDSTORE_IMAP_PORT = String(
+    startedNoCondstore.getMappedPort(31143),
+  );
   process.env.POSTIMAP_TEST_LMTP_HOST = config.lmtpHost;
   process.env.POSTIMAP_TEST_LMTP_PORT = String(config.lmtpPort);
   process.env.POSTIMAP_TEST_MAILPIT_HOST = config.mailpitHost;
@@ -135,6 +162,7 @@ export default async function setup() {
       await startedToxiproxy.stop();
       await startedMailpit.stop();
       await startedMail.stop();
+      await startedNoCondstore.stop();
       await startedPg.stop();
       await network.stop();
     };
