@@ -4,6 +4,7 @@ import { getDatabaseBounds, getDatabaseSsl, getDatabaseUrl, loadConfig } from ".
 import { validateEncryptionKey } from "./crypto.js";
 import { DavOrchestrator } from "./dav/orchestrator.js";
 import { createDatabase } from "./db/connection.js";
+import { acquireInstanceLock } from "./db/instance-lock.js";
 import { migrateUp } from "./db/migrate.js";
 import { createHealthServer } from "./health.js";
 import { Orchestrator } from "./sync/orchestrator.js";
@@ -53,20 +54,7 @@ async function main(): Promise<void> {
   const ssl = getDatabaseSsl(config);
   const db = createDatabase(databaseUrl, ssl, getDatabaseBounds(config));
 
-  // Run migrations
-  await migrateUp(databaseUrl, ssl);
-
-  // Publish the running service version through the contract-version handshake table
-  await db
-    .updateTable("postimap_info")
-    .set({ service_version: readServiceVersion(), updated_at: new Date() })
-    .where("singleton", "=", true)
-    .execute();
-
-  // Recover any sync_queue entries left in processing state from a previous crash
-  await startupRecovery(db);
-
-  // Create and start orchestrator
+  // Create the orchestrators (no I/O until start)
   const orchestrator = new Orchestrator(
     db,
     {
@@ -114,8 +102,27 @@ async function main(): Promise<void> {
     databaseUrl,
   );
 
-  // Start health server
+  // Health first: a deploy that waits for the new container to be healthy before stopping
+  // the old one must see it alive while it waits for the instance lock below.
   const healthServer = createHealthServer(orchestrator, db, config.health.port, davOrchestrator);
+
+  // Nothing below may run next to another instance on the same schema -- see instance-lock.ts
+  const instanceLock = await acquireInstanceLock(databaseUrl, ssl, {
+    onLost: () => process.exit(1),
+  });
+
+  // Run migrations
+  await migrateUp(databaseUrl, ssl);
+
+  // Publish the running service version through the contract-version handshake table
+  await db
+    .updateTable("postimap_info")
+    .set({ service_version: readServiceVersion(), updated_at: new Date() })
+    .where("singleton", "=", true)
+    .execute();
+
+  // Recover any sync_queue entries left in processing state from a previous crash
+  await startupRecovery(db);
 
   // Start sync
   await orchestrator.start();
@@ -140,6 +147,7 @@ async function main(): Promise<void> {
 
     healthServer.close();
     await db.destroy();
+    await instanceLock.release();
     process.exit(0);
   };
 
