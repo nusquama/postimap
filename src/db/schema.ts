@@ -108,6 +108,8 @@ export interface AttachmentTable {
   content_id: string | null;
   size_bytes: number | null;
   data: Buffer | null;
+  /** MIME part number on the server; set when `data` stays there (storage.attachments = on_demand). */
+  imap_part: string | null;
 }
 
 export interface SyncQueueTable {

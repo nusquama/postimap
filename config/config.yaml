@@ -85,6 +85,11 @@ storage:
   # -- their body, headers and attachments are never fetched from IMAP, so one oversized
   # message can't materialize its whole size (plus every attachment) in memory
   max_message_bytes: 52428800 # 50 MB
+  # store: attachment bytes and the raw message are copied into PG (the original behavior).
+  # on_demand: only headers and text/HTML parts are fetched; each attachment row keeps
+  # its MIME part number (imap_part) and no data, and is downloaded from IMAP when asked
+  # for (GET /attachments/:id on the health port). raw_source stays NULL.
+  attachments: store
 
 retention:
   # How often the retention purge runs
@@ -126,6 +131,10 @@ logging:
 health:
   # HTTP health check endpoint port
   port: 8090
+  # Bearer token for GET /attachments/:id, which serves an attachment's bytes (downloaded
+  # from IMAP when storage.attachments = on_demand). Unset disables the route. The port is
+  # meant for the internal network only; the token is the access control.
+  attachments_token: ${ATTACHMENTS_TOKEN:-}
 
 # Credential encryption key (hex-encoded 32-byte AES-256 key, 64 hex chars)
 # Optional -- imap_password/smtp_password are stored with a 1-byte format prefix; unset

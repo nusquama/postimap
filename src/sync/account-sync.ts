@@ -77,6 +77,8 @@ export class AccountSync {
       IDLE_FOLDERS: string[];
       /** Above this size a message is stored as envelope+flags only; see message-sync.ts. */
       MAX_MESSAGE_BYTES?: number;
+      /** Keep attachment bytes on the server; see storage.attachments in config.yaml. */
+      ATTACHMENTS_ON_DEMAND?: boolean;
       FULL_TIER_MAX_SKIP_SECONDS: number;
     },
     _databaseUrl: string,
@@ -159,6 +161,7 @@ export class AccountSync {
         this.capabilities,
         this.config.MAX_MESSAGE_BYTES,
         this.config.FULL_TIER_MAX_SKIP_SECONDS * 1_000,
+        this.config.ATTACHMENTS_ON_DEMAND ?? false,
       );
 
       const folders = await this.getDbFolders();
@@ -367,6 +370,7 @@ export class AccountSync {
         this.capabilities,
         this.config.MAX_MESSAGE_BYTES,
         this.config.FULL_TIER_MAX_SKIP_SECONDS * 1_000,
+        this.config.ATTACHMENTS_ON_DEMAND ?? false,
       );
 
       // Reconcile the folder list every cycle: a folder created in another mail client
@@ -500,6 +504,7 @@ export class AccountSync {
             this.capabilities,
             this.config.MAX_MESSAGE_BYTES,
             this.config.FULL_TIER_MAX_SKIP_SECONDS * 1_000,
+            this.config.ATTACHMENTS_ON_DEMAND ?? false,
           );
 
           await inbound.syncFolder(dbFolder.id, dbFolder.imap_name, this.abortController.signal);

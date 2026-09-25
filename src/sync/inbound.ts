@@ -71,6 +71,8 @@ export class InboundSync {
     private maxMessageBytes?: number,
     /** How long the full-diff tier may skip a cycle whose mailbox counters have not moved. */
     private fullTierMaxSkipMs = 0,
+    /** Keep attachment bytes on the server; see storage.attachments in config.yaml. */
+    private attachmentsOnDemand = false,
   ) {}
 
   /**
@@ -172,7 +174,11 @@ export class InboundSync {
             this.accountId,
             folderId,
             changes.newUids,
-            { signal, maxMessageBytes: this.maxMessageBytes },
+            {
+              signal,
+              maxMessageBytes: this.maxMessageBytes,
+              attachmentsOnDemand: this.attachmentsOnDemand,
+            },
           );
         }
 
@@ -325,7 +331,12 @@ export class InboundSync {
               this.accountId,
               folderId,
               missingUids,
-              { backfill, signal, maxMessageBytes: this.maxMessageBytes },
+              {
+                backfill,
+                signal,
+                maxMessageBytes: this.maxMessageBytes,
+                attachmentsOnDemand: this.attachmentsOnDemand,
+              },
             );
           }
 

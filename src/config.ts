@@ -49,6 +49,7 @@ const PostImapConfigSchema = z.object({
   }),
   storage: z.object({
     max_message_bytes: z.number().int().positive(),
+    attachments: z.enum(["store", "on_demand"]),
   }),
   retention: z.object({
     interval_hours: z.number().int().positive(),
@@ -71,6 +72,10 @@ const PostImapConfigSchema = z.object({
   }),
   health: z.object({
     port: z.number().int().positive(),
+    attachments_token: z
+      .string()
+      .optional()
+      .transform((val) => (val === "" ? undefined : val)),
   }),
   encryption_key: z
     .string()

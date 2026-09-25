@@ -8,6 +8,7 @@ import { createLogger } from "../util/logger.js";
 import { sanitizeNulBytesDeep } from "../util/sanitize.js";
 import { formatUidSet } from "../util/uid-set.js";
 import { parseMessage } from "./mime-parser.js";
+import { type PlannedAttachment, planParts, rebuildTextOnlySource } from "./text-only.js";
 import { resolveThreadId } from "./threading.js";
 
 const log = createLogger("message-sync");
@@ -31,12 +32,28 @@ export interface FetchAndStoreOptions {
    * this function doesn't need to invent one).
    */
   maxMessageBytes?: number;
+  /**
+   * storage.attachments = on_demand: fetch headers and text parts only, keep attachment
+   * bytes on the server. `maxMessageBytes` then applies to the text parts alone.
+   */
+  attachmentsOnDemand?: boolean;
 }
 
 const FULL_FETCH_QUERY = {
   envelope: true,
   flags: true,
   source: true,
+  bodyStructure: true,
+  uid: true,
+  size: true,
+  internalDate: true,
+} as const;
+
+/** Everything but content: the header block and the MIME tree the text parts are read from. */
+const TEXT_ONLY_FETCH_QUERY = {
+  envelope: true,
+  flags: true,
+  headers: true,
   bodyStructure: true,
   uid: true,
   size: true,
@@ -80,6 +97,18 @@ export async function fetchAndStoreMessages(
       { folderId, batch: `${i + 1}-${Math.min(i + batchSize, uids.length)}/${uids.length}` },
       "Fetching message batch",
     );
+
+    if (options.attachmentsOnDemand) {
+      storedCount += await fetchAndStoreTextOnly(
+        client,
+        db,
+        accountId,
+        folderId,
+        uidRange,
+        options,
+      );
+      continue;
+    }
 
     // Two-phase fetch when a size limit is configured: a message's size arrives in the
     // SAME FETCH response as its source, so there is no way to inspect it before the
@@ -151,6 +180,75 @@ export async function fetchAndStoreMessages(
 }
 
 /**
+ * One batch in on-demand mode. The metadata FETCH is drained before any per-message text
+ * FETCH is issued: ImapFlow runs one command at a time on a connection, so a fetchOne()
+ * inside the outer iteration would wait on the iteration it is part of.
+ */
+async function fetchAndStoreTextOnly(
+  client: ImapFlow,
+  db: Kysely<Database>,
+  accountId: string,
+  folderId: string,
+  uidRange: string,
+  options: FetchAndStoreOptions,
+): Promise<number> {
+  const fetched: import("imapflow").FetchMessageObject[] = [];
+  for await (const msg of client.fetch(uidRange, TEXT_ONLY_FETCH_QUERY, { uid: true })) {
+    fetched.push(msg);
+  }
+
+  let storedCount = 0;
+  for (const msg of fetched) {
+    throwIfAborted(options.signal);
+    try {
+      const structure = msg.bodyStructure;
+      const plan = structure ? planParts(structure) : null;
+      const tooBig =
+        options.maxMessageBytes !== undefined &&
+        plan !== null &&
+        plan.textBytes > options.maxMessageBytes;
+      if (!structure || !plan || !msg.headers || tooBig) {
+        if (tooBig) {
+          log.warn(
+            { folderId, uid: msg.uid, maxMessageBytes: options.maxMessageBytes },
+            "Message text exceeds the size limit, storing envelope and flags only",
+          );
+        }
+        if (
+          await storeMessage(db, accountId, folderId, msg, {
+            backfill: options.backfill,
+            truncated: true,
+          })
+        )
+          storedCount++;
+        continue;
+      }
+
+      let contents = new Map<string, Buffer>();
+      if (plan.textParts.length > 0) {
+        const withText = await client.fetchOne(
+          String(msg.uid),
+          { uid: true, bodyParts: plan.textParts },
+          { uid: true },
+        );
+        if (withText !== false && withText.bodyParts) contents = withText.bodyParts;
+      }
+
+      const source = rebuildTextOnlySource(msg.headers, structure, contents);
+      const stored = await storeMessage(db, accountId, folderId, msg, {
+        backfill: options.backfill,
+        truncated: false,
+        textOnly: { source, attachments: plan.attachments },
+      });
+      if (stored) storedCount++;
+    } catch (err) {
+      log.error({ err, uid: msg.uid, folderId }, "Failed to store message");
+    }
+  }
+  return storedCount;
+}
+
+/**
  * Store a single fetched message with parsed MIME content.
  *
  * `options.truncated` messages were fetched with {@link ENVELOPE_ONLY_FETCH_QUERY} --
@@ -163,16 +261,23 @@ async function storeMessage(
   accountId: string,
   folderId: string,
   msg: import("imapflow").FetchMessageObject,
-  options: { backfill?: boolean; truncated?: boolean } = {},
+  options: {
+    backfill?: boolean;
+    truncated?: boolean;
+    /** On-demand mode: the rebuilt text-only source, and attachments to record without data. */
+    textOnly?: { source: Buffer; attachments: PlannedAttachment[] };
+  } = {},
 ): Promise<boolean> {
-  const rawSource = msg.source ?? null;
+  // In on-demand mode there is no raw source to keep: the rebuilt one lacks the attachments.
+  const rawSource = options.textOnly ? null : (msg.source ?? null);
+  const parseSource = options.textOnly?.source ?? rawSource;
   const isTruncated = options.truncated ?? false;
 
   // Parse MIME content from raw source
   let parsed: Awaited<ReturnType<typeof parseMessage>> | null = null;
-  if (rawSource) {
+  if (parseSource) {
     try {
-      parsed = await parseMessage(rawSource);
+      parsed = await parseMessage(parseSource);
     } catch (err) {
       log.warn({ err, uid: msg.uid }, "MIME parse failed, storing with envelope data only");
     }
@@ -304,7 +409,23 @@ async function storeMessage(
       // limit lowered since the last full sync) drops whatever attachments an earlier,
       // untruncated sync stored -- they'd otherwise dangle off a row that now claims to
       // carry no attachment content.
-      if (parsed?.attachments && parsed.attachments.length > 0) {
+      if (options.textOnly) {
+        await trx.deleteFrom("attachments").where("message_id", "=", messageRowId).execute();
+        for (const att of options.textOnly.attachments) {
+          await trx
+            .insertInto("attachments")
+            .values({
+              message_id: messageRowId,
+              filename: sanitizeNulBytesDeep(att.filename),
+              content_type: att.contentType,
+              content_id: sanitizeNulBytesDeep(att.contentId),
+              size_bytes: att.size,
+              data: null,
+              imap_part: att.part,
+            })
+            .execute();
+        }
+      } else if (parsed?.attachments && parsed.attachments.length > 0) {
         // Delete existing attachments before re-inserting
         await trx.deleteFrom("attachments").where("message_id", "=", messageRowId).execute();
 

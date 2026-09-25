@@ -71,6 +71,7 @@ async function main(): Promise<void> {
       ENCRYPTION_KEY: config.encryption_key,
       IDLE_FOLDERS: config.sync.idle_folders,
       MAX_MESSAGE_BYTES: config.storage.max_message_bytes,
+      ATTACHMENTS_ON_DEMAND: config.storage.attachments === "on_demand",
       FULL_TIER_MAX_SKIP_SECONDS: config.sync.full_tier_max_skip_seconds,
       RETENTION: {
         purgeExpungedAfterDays: config.retention.purge_expunged_after_days,
@@ -106,7 +107,11 @@ async function main(): Promise<void> {
 
   // Health first: a deploy that waits for the new container to be healthy before stopping
   // the old one must see it alive while it waits for the instance lock below.
-  const healthServer = createHealthServer(orchestrator, db, config.health.port, davOrchestrator);
+  const healthServer = createHealthServer(orchestrator, db, config.health.port, davOrchestrator, {
+    token: config.health.attachments_token,
+    encryptionKey: config.encryption_key,
+    tlsRejectUnauthorized: config.imap.tls_reject_unauthorized,
+  });
 
   // Nothing below may run next to another instance on the same schema -- see instance-lock.ts
   const instanceLock = await acquireInstanceLock(databaseUrl, ssl, {
