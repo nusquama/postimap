@@ -269,6 +269,21 @@ export class InboundSync {
           return result;
         }
 
+        // Every account start runs this, not syncFolder(), so a folder the server renumbered
+        // while PostIMAP was down reaches here first. The diff below matches rows by UID
+        // alone: under a new UIDVALIDITY an old row whose UID the server reused would be kept
+        // as if it were the new message, and every later write to it would land on another
+        // mail. Same reset as syncFolder()'s check, done here while the lock is still held.
+        const pins = await this.getFolderPins(folderId);
+        if (pins.uidvalidity !== null && mailbox.uidValidity !== pins.uidvalidity) {
+          log.warn(
+            { folderId, folderImapName },
+            "UIDVALIDITY changed while not syncing, resetting folder before the full resync",
+          );
+          await invalidateFolderQueue(this.db, folderId);
+          await resetFolderMessages(this.db, folderId);
+        }
+
         // Search all UIDs
         const allUids = await this.client.client.search({ all: true }, { uid: true });
 
