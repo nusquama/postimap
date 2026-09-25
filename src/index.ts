@@ -5,6 +5,7 @@ import { validateEncryptionKey } from "./crypto.js";
 import { DavOrchestrator } from "./dav/orchestrator.js";
 import { createDatabase } from "./db/connection.js";
 import { acquireInstanceLock } from "./db/instance-lock.js";
+import { setListenerSsl } from "./db/listener.js";
 import { migrateUp } from "./db/migrate.js";
 import { createHealthServer } from "./health.js";
 import { Orchestrator } from "./sync/orchestrator.js";
@@ -53,6 +54,7 @@ async function main(): Promise<void> {
   const databaseUrl = getDatabaseUrl(config);
   const ssl = getDatabaseSsl(config);
   const db = createDatabase(databaseUrl, ssl, getDatabaseBounds(config));
+  setListenerSsl(ssl);
 
   // Create the orchestrators (no I/O until start)
   const orchestrator = new Orchestrator(
