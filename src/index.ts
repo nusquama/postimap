@@ -31,6 +31,9 @@ const log = createLogger("main");
  */
 const SHUTDOWN_TIMEOUT_MS = 25_000;
 
+/** How long shutdown waits for the database pool to close before exiting anyway. */
+const DB_CLOSE_TIMEOUT_MS = 5_000;
+
 async function main(): Promise<void> {
   installProcessGuards();
 
@@ -153,8 +156,21 @@ async function main(): Promise<void> {
     }
 
     healthServer.close();
-    await db.destroy();
+    // The work has stopped: hand the lock over first, so a waiting instance never depends
+    // on the rest of this shutdown finishing.
     await instanceLock.release();
+    // db.destroy() waits for every pooled connection to close and was seen never settling
+    // against a Supabase session pooler, leaving the process alive until SIGKILL.
+    const destroyed = await Promise.race([
+      db.destroy().then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), DB_CLOSE_TIMEOUT_MS)),
+    ]);
+    if (!destroyed) {
+      log.warn(
+        { timeoutMs: DB_CLOSE_TIMEOUT_MS },
+        "Database pool did not close in time, exiting anyway",
+      );
+    }
     process.exit(0);
   };
 
