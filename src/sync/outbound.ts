@@ -173,6 +173,47 @@ export function coalesce(entries: QueueEntry[]): CoalesceResult {
   return { effective, superseded };
 }
 
+/**
+ * Retried flag writes that a newer write to the same flag of the same message has already
+ * overtaken.
+ *
+ * coalesce() only sees one batch. A failed write keeps its `created_at` but waits for a
+ * later `next_retry_at`, so a newer write to the same flag can be claimed and applied in
+ * an earlier batch. Replaying the old one afterwards would undo the consumer's last word
+ * on the server, and the next inbound cycle would copy that back into PG. A newer write
+ * that went dead does not count: its revert put the mirror back, and the old write still
+ * states what the consumer wants.
+ */
+async function findOvertakenFlagRetries(
+  db: Kysely<Database>,
+  entries: QueueEntry[],
+): Promise<Set<string>> {
+  const retryIds = entries
+    .filter(
+      (e) =>
+        (e.action === "flag_add" || e.action === "flag_remove") &&
+        e.attempts > 0 &&
+        e.message_id !== null,
+    )
+    .map((e) => e.id);
+  if (retryIds.length === 0) return new Set();
+
+  const result = await sql<{ id: string }>`
+    SELECT old.id
+    FROM sync_queue old
+    WHERE old.id IN (${sql.join(retryIds)})
+      AND EXISTS (
+        SELECT 1 FROM sync_queue newer
+        WHERE newer.message_id = old.message_id
+          AND newer.action IN ('flag_add', 'flag_remove')
+          AND newer.payload->>'flag' = old.payload->>'flag'
+          AND newer.status <> 'dead'
+          AND (newer.created_at, newer.id) > (old.created_at, old.id)
+      )
+  `.execute(db);
+  return new Set(result.rows.map((r) => String(r.id)));
+}
+
 /** The net move: the first entry's origin, the last entry's destination. */
 function mergeMoves(moveEntries: QueueEntry[]): QueueEntry {
   const first = moveEntries[0];
@@ -490,7 +531,13 @@ export class OutboundProcessor {
     log.debug({ accountId, count: claimed.length }, "Processing outbound batch");
 
     // Coalesce entries to reduce redundant IMAP operations
-    const { effective, superseded } = coalesce(claimed);
+    const coalesced = coalesce(claimed);
+    const overtaken = await findOvertakenFlagRetries(this.db, coalesced.effective);
+    const effective = coalesced.effective.filter((e) => !overtaken.has(String(e.id)));
+    const superseded = [
+      ...coalesced.superseded,
+      ...coalesced.effective.filter((e) => overtaken.has(String(e.id))),
+    ];
 
     // Mark superseded entries as completed
     if (superseded.length > 0) {
